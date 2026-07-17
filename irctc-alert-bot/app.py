@@ -86,15 +86,29 @@ def _build_watch_list_message(watches: list) -> str:
     """Return a formatted HTML string listing all watch dicts."""
     lines = [f"📋 <b>Your Active Watches ({len(watches)})</b>\n"]
     for i, w in enumerate(watches, start=1):
-        last = w.get("last_status", {})
-        status_text = last.get("exact", "Pending first check")
-        lines.append(
+        last        = w.get("last_status", {})
+        raw_exact   = last.get("exact") or "Pending first check"
+        raw_cp      = last.get("confirm_probability") or ""
+        raw_fare    = last.get("ticket_fare") or 0
+        status_code = last.get("status", "")
+        emoji       = scraper.STATUS_EMOJI.get(status_code, "📊")
+
+        # Build the status line — exact text only, no stray None values
+        status_text = f"{emoji} {raw_exact}" if status_code else raw_exact
+
+        entry = (
             f"<b>{i}. Train {w.get('train_number', '?')}</b>\n"
             f"   🛫 {w.get('from_station', '?')} → 🛬 {w.get('to_station', '?')}\n"
             f"   📅 {w.get('date', '?')} | 💺 {w.get('travel_class', '?')}\n"
             f"   📊 Status: {status_text}\n"
-            f"   🆔 ID: <code>{w.get('id', '')[:8]}</code>\n"
         )
+        if raw_cp:
+            cp_emoji = {"High": "🔥", "Med": "🌡️", "Low": "🧊"}.get(raw_cp, "📈")
+            entry += f"   {cp_emoji} Confirm: {raw_cp}\n"
+        if raw_fare:
+            entry += f"   💰 Fare: ₹{raw_fare}\n"
+        entry += f"   🆔 ID: <code>{w.get('id', '')[:8]}</code>\n"
+        lines.append(entry)
     return "\n".join(lines)
 
 
@@ -278,6 +292,23 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
         # AI-POWERED FREE TEXT ROUTING
         # ================================================================
         else:
+            # ── Chit-chat guard: ignore greetings / random short messages ─
+            # These would burn AI tokens and confuse the intent classifier.
+            CHITCHAT = {
+                "hi", "hey", "hello", "bye", "ok", "okay", "thanks",
+                "thank you", "thx", "yes", "no", "lol", "haha", "k",
+                "good", "nice", "cool", "great", "fine", "sure", "yep",
+                "nope", "hmm", "hm", "test", "ping", "yo", "sup",
+            }
+            if text.lower().strip("!?.") in CHITCHAT:
+                send_message(chat_id, (
+                    "👋 Hi! I'm your IRCTC Tatkal Alert Bot.\n\n"
+                    "Send train details to create a watch:\n"
+                    "<code>12951 BCT NDLS 18-Jul-2026 3A</code>\n\n"
+                    "Or type /help to see all commands."
+                ))
+                return PlainTextResponse("ok", status_code=200)
+
             intent = determine_intent(text)
             print(f"[app] Intent detected: {intent}")
 
