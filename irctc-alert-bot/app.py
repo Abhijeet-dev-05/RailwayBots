@@ -6,7 +6,9 @@ AI intent detection, and manages watch creation/deletion/status commands.
 """
 
 import os
+import asyncio
 from contextlib import asynccontextmanager
+from functools import partial
 
 import requests
 import uvicorn
@@ -33,6 +35,9 @@ load_dotenv()
 
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+# Deduplicate Telegram retries — store last 100 processed update_ids
+_seen_update_ids: set = set()
 
 # ---------------------------------------------------------------------------
 # Lifespan — startup / shutdown
@@ -109,6 +114,17 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
     """
     try:
         data = await request.json()
+
+        # ── Deduplicate: ignore updates we've already processed ──────────
+        update_id = data.get("update_id")
+        if update_id is not None:
+            if update_id in _seen_update_ids:
+                print(f"[app] Duplicate update_id {update_id} — skipping.")
+                return PlainTextResponse("ok", status_code=200)
+            _seen_update_ids.add(update_id)
+            # Keep the set bounded so it doesn't grow forever
+            if len(_seen_update_ids) > 100:
+                _seen_update_ids.pop()
 
         # ── Extract core fields ──────────────────────────────────────────
         message = data.get("message") or data.get("edited_message")
@@ -212,7 +228,7 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                 send_message(chat_id, "⚠️ Watch not found. Use /list to see your IDs.")
             else:
                 send_message(chat_id, f"⏳ Checking live status for train <b>{matched.get('train_number')}</b>...")
-                live = scraper.get_current_status(matched)
+                live = await asyncio.to_thread(scraper.get_current_status, matched)
                 send_message(chat_id, (
                     f"📊 <b>Live Status</b>\n"
                     f"{DIVIDER}\n"
@@ -234,7 +250,7 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                 send_message(chat_id, f"⏳ Checking live status for <b>{len(watches)}</b> watch(es)...")
                 lines = [f"📡 <b>Live Status — All Watches</b>\n{DIVIDER}"]
                 for w in watches:
-                    live = scraper.get_current_status(w)
+                    live = await asyncio.to_thread(scraper.get_current_status, w)
                     lines.append(
                         f"🚂 <b>{w.get('train_number')}</b> | "
                         f"{w.get('from_station')}→{w.get('to_station')} | "
@@ -342,13 +358,15 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                         f"<b>{train_number}</b>..."
                     ))
 
-                    # Live availability check before creating the watch
-                    result = scraper.check_availability(
-                        train_number=train_number,
-                        from_station=from_station,
-                        to_station=to_station,
-                        date=date,
-                        travel_class=travel_class,
+                    # Run the blocking scrape in a thread pool so the
+                    # async event loop is not stalled during sleep+HTTP
+                    result = await asyncio.to_thread(
+                        scraper.check_availability,
+                        train_number,
+                        from_station,
+                        to_station,
+                        date,
+                        travel_class,
                     )
 
                     # Persist the watch
@@ -410,6 +428,12 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
 async def root() -> PlainTextResponse:
     """Simple health check endpoint for Render / uptime monitors."""
     return PlainTextResponse("IRCTC Tatkal Alert Bot is running. ✅", status_code=200)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Suppress browser favicon 404 noise."""
+    return PlainTextResponse("", status_code=204)
 
 
 # ---------------------------------------------------------------------------

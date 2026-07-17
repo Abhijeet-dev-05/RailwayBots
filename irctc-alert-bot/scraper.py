@@ -37,10 +37,10 @@ NTES_URL = (
 DATE_FORMATS = ["%d-%b-%Y", "%d-%m-%Y", "%d/%m/%Y", "%d-%B-%Y"]
 
 # Request timeout in seconds
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 8
 
 # Polite delay between requests to avoid hammering the server
-SCRAPE_DELAY = 2
+SCRAPE_DELAY = 1
 
 # Minimal browser-like headers to reduce the chance of being blocked
 DEFAULT_HEADERS = {
