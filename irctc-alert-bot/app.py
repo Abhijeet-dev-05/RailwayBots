@@ -385,9 +385,7 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                 # All required fields present — create the watch
                 elif parsed.get("is_valid"):
 
-                    # Save the watch immediately — no API call needed here.
-                    # The scheduler will check availability within 10 minutes
-                    # and alert the user if seats are found.
+                    # Save the watch immediately — instant response
                     watch = storage.add_watch(
                         chat_id=chat_id,
                         train_number=train_number,
@@ -405,12 +403,48 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                         f"📅 Date:  {date}\n"
                         f"💺 Class: {travel_class} (Tatkal)\n"
                         f"{DIVIDER}\n"
-                        f"🔔 You'll be alerted the moment seats open up.\n"
-                        f"⏱️ First check within <b>10 minutes</b>.\n"
+                        f"⏳ Checking live status...\n"
                         f"🆔 Watch ID: <code>{watch['id'][:8]}</code>\n"
                         f"{DIVIDER}\n"
-                        f"💡 Use /status {watch['id'][:8]} to check live status now."
+                        f"🔔 You'll be alerted the moment seats open up.\n"
+                        f"⏱️ Monitoring every <b>10 minutes</b>."
                     ))
+
+                    # Now do the API check in background and send a follow-up message
+                    async def _initial_check(w, cid):
+                        try:
+                            res = await asyncio.to_thread(
+                                scraper.check_availability,
+                                w["train_number"],
+                                w["from_station"],
+                                w["to_station"],
+                                w["date"],
+                                w["travel_class"],
+                            )
+                            storage.update_watch_status(w["id"], res)
+                            status_code  = res.get("status", "UNKNOWN")
+                            emoji        = scraper.STATUS_EMOJI.get(status_code, "❓")
+                            exact        = res.get("exact", status_code)
+                            cp           = res.get("confirm_probability") or ""
+                            fare         = res.get("ticket_fare") or 0
+
+                            msg = (
+                                f"📊 <b>Initial Status: Train {w['train_number']}</b>\n"
+                                f"{DIVIDER}\n"
+                                f"{emoji} <b>{exact}</b>\n"
+                            )
+                            if cp:
+                                cp_emoji = {"High": "🔥", "Med": "🌡️", "Low": "🧊"}.get(cp, "📈")
+                                msg += f"{cp_emoji} Confirm Probability: {cp}\n"
+                            if fare:
+                                msg += f"💰 Tatkal Fare: ₹{fare}\n"
+                            msg += DIVIDER
+
+                            send_message(cid, msg)
+                        except Exception as e:
+                            print(f"[app] Initial check failed: {e}")
+
+                    asyncio.create_task(_initial_check(watch, chat_id))
 
                 # Validation failed — show suggestion or generic error
                 else:
