@@ -384,23 +384,10 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
 
                 # All required fields present — create the watch
                 elif parsed.get("is_valid"):
-                    send_message(chat_id, (
-                        f"⏳ Checking availability for train "
-                        f"<b>{train_number}</b>..."
-                    ))
 
-                    # Run the blocking scrape in a thread pool so the
-                    # async event loop is not stalled during sleep+HTTP
-                    result = await asyncio.to_thread(
-                        scraper.check_availability,
-                        train_number,
-                        from_station,
-                        to_station,
-                        date,
-                        travel_class,
-                    )
-
-                    # Persist the watch
+                    # Save the watch immediately — no API call needed here.
+                    # The scheduler will check availability within 10 minutes
+                    # and alert the user if seats are found.
                     watch = storage.add_watch(
                         chat_id=chat_id,
                         train_number=train_number,
@@ -410,20 +397,7 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                         travel_class=travel_class,
                     )
 
-                    # Immediately store the first status so comparisons work
-                    storage.update_watch_status(watch["id"], result)
-
-                    # Build status display from result we already have —
-                    # do NOT call get_current_status() again (wastes an API call)
-                    status_code  = result.get("status", "UNKNOWN")
-                    emoji        = scraper.STATUS_EMOJI.get(status_code, "❓")
-                    exact        = result.get("exact", status_code)
-                    emoji_status = f"{emoji} {exact}"
-                    cp           = result.get("confirm_probability", "")
-                    fare         = result.get("ticket_fare", 0)
-
-                    # Build the confirmation message
-                    confirm_msg = (
+                    send_message(chat_id, (
                         f"✅ <b>Watch Created!</b>\n"
                         f"{DIVIDER}\n"
                         f"🚂 Train: <b>{train_number}</b>\n"
@@ -431,20 +405,12 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                         f"📅 Date:  {date}\n"
                         f"💺 Class: {travel_class} (Tatkal)\n"
                         f"{DIVIDER}\n"
-                        f"📊 Current Status: {emoji_status}\n"
-                    )
-                    if cp:
-                        cp_emoji = {"High": "🔥", "Med": "🌡️", "Low": "🧊"}.get(cp, "📈")
-                        confirm_msg += f"{cp_emoji} Confirm Probability: {cp}\n"
-                    if fare:
-                        confirm_msg += f"💰 Tatkal Fare: ₹{fare}\n"
-                    confirm_msg += (
+                        f"🔔 You'll be alerted the moment seats open up.\n"
+                        f"⏱️ First check within <b>10 minutes</b>.\n"
                         f"🆔 Watch ID: <code>{watch['id'][:8]}</code>\n"
                         f"{DIVIDER}\n"
-                        f"🔔 You'll be alerted the moment seats open up.\n"
-                        f"⏱️ Monitoring every <b>10 minutes</b>."
-                    )
-                    send_message(chat_id, confirm_msg)
+                        f"💡 Use /status {watch['id'][:8]} to check live status now."
+                    ))
 
                 # Validation failed — show suggestion or generic error
                 else:
