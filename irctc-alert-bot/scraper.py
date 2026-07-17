@@ -229,6 +229,12 @@ def check_availability(
     try:
         resp = requests.get(AVAIL_URL, headers=headers, params=params,
                             timeout=REQUEST_TIMEOUT)
+        # If rate-limited, wait 3s and retry once
+        if resp.status_code == 429:
+            print("[scraper] ⚠️  Rate limited (429). Retrying in 3s...")
+            time.sleep(3)
+            resp = requests.get(AVAIL_URL, headers=headers, params=params,
+                                timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
     except requests.exceptions.Timeout:
         return _make_result(

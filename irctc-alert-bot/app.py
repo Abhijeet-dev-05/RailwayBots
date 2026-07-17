@@ -382,10 +382,17 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                     # Immediately store the first status so comparisons work
                     storage.update_watch_status(watch["id"], result)
 
-                    current_status = result.get("exact", result.get("status", "—"))
-                    emoji_status   = scraper.get_current_status(watch)
+                    # Build status display from result we already have —
+                    # do NOT call get_current_status() again (wastes an API call)
+                    status_code  = result.get("status", "UNKNOWN")
+                    emoji        = scraper.STATUS_EMOJI.get(status_code, "❓")
+                    exact        = result.get("exact", status_code)
+                    emoji_status = f"{emoji} {exact}"
+                    cp           = result.get("confirm_probability", "")
+                    fare         = result.get("ticket_fare", 0)
 
-                    send_message(chat_id, (
+                    # Build the confirmation message
+                    confirm_msg = (
                         f"✅ <b>Watch Created!</b>\n"
                         f"{DIVIDER}\n"
                         f"🚂 Train: <b>{train_number}</b>\n"
@@ -394,11 +401,19 @@ async def telegram_webhook(request: Request) -> PlainTextResponse:
                         f"💺 Class: {travel_class} (Tatkal)\n"
                         f"{DIVIDER}\n"
                         f"📊 Current Status: {emoji_status}\n"
+                    )
+                    if cp:
+                        cp_emoji = {"High": "🔥", "Med": "🌡️", "Low": "🧊"}.get(cp, "📈")
+                        confirm_msg += f"{cp_emoji} Confirm Probability: {cp}\n"
+                    if fare:
+                        confirm_msg += f"💰 Tatkal Fare: ₹{fare}\n"
+                    confirm_msg += (
                         f"🆔 Watch ID: <code>{watch['id'][:8]}</code>\n"
                         f"{DIVIDER}\n"
                         f"🔔 You'll be alerted the moment seats open up.\n"
                         f"⏱️ Monitoring every <b>10 minutes</b>."
-                    ))
+                    )
+                    send_message(chat_id, confirm_msg)
 
                 # Validation failed — show suggestion or generic error
                 else:
