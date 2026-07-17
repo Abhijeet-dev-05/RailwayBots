@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+gunicorn
+requests
+beautifulsoup4
+apscheduler
+python-dotenv
+lxml
+groq
